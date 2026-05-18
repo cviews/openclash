@@ -3,9 +3,11 @@ import type { OpenClashPluginConfig } from "../config/types.js";
 import { resolveConfig } from "../config/config.js";
 import { createGateway, type Gateway } from "../gateway/index.js";
 import { isOpenClashRunning } from "../shared/port.js";
+import { createRequire } from "node:module";
 import { logger } from "../shared/logger.js";
 
-const PLUGIN_VERSION = "0.1.0";
+const require = createRequire(import.meta.url);
+const { version: PLUGIN_VERSION } = require("../../package.json");
 
 let activeGateway: Gateway | null = null;
 let initializing = false;
@@ -36,6 +38,7 @@ export async function openclashServerPlugin(
   pluginConfig = config;
 
   if (Object.keys(config.providers).length === 0) {
+    initializing = false;
     return {};
   }
 
@@ -80,14 +83,64 @@ export async function openclashServerPlugin(
     showToast(gateway.port, !gateway.isOwner);
   };
 
-  // Initial start
-  gatewayReadyPromise = ensureGateway();
+  // Heartbeat: when attached (non-owner), poll the remote gateway periodically.
+  // If it dies, promote immediately instead of waiting for session.created.
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-  // Don't let startup errors crash the host
-  gatewayReadyPromise.catch(() => {});
+  const startHeartbeat = () => {
+    stopHeartbeat();
+    heartbeatTimer = setInterval(async () => {
+      if (!activeGateway || activeGateway.isOwner) {
+        // We're owner now (or gateway gone), stop polling
+        stopHeartbeat();
+        return;
+      }
+      const alive = await isOpenClashRunning(config.server.port, config.server.host);
+      if (!alive) {
+        stopHeartbeat();
+        try {
+          await ensureGateway();
+        } catch {
+          // Will retry on next heartbeat or session.created
+          startHeartbeat();
+        }
+      }
+    }, 3000);
+  };
+
+  const stopHeartbeat = () => {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
+
+  // Initial start
+  gatewayReadyPromise = ensureGateway().then(() => {
+    initializing = false;
+    // If attached to remote, start heartbeat monitoring
+    if (activeGateway && !activeGateway.isOwner) {
+      startHeartbeat();
+    }
+  }).catch((err) => {
+    // Reset state so re-initialization is possible on next session
+    initializing = false;
+    activeGateway = null;
+    // Notify user via toast
+    const message = err instanceof Error ? err.message : "Unknown error";
+    input.client.tui.showToast({
+      body: {
+        title: `OpenClash v${PLUGIN_VERSION}`,
+        message: `Gateway failed: ${message}`,
+        variant: "error",
+        duration: 8000,
+      },
+    }).catch(() => {});
+  });
 
   // Shutdown gateway when host process exits (only if we own the server)
   const cleanup = () => {
+    stopHeartbeat();
     if (activeGateway?.isOwner) {
       activeGateway.stop().catch(() => {});
       activeGateway = null;
@@ -100,10 +153,14 @@ export async function openclashServerPlugin(
   return {
     event: async ({ event }) => {
       if (event.type === "session.created") {
-        // On each new session, ensure gateway is still available
-        // (handles the case where the owner TUI was closed)
         try {
           await ensureGateway();
+          // Update heartbeat based on ownership
+          if (activeGateway?.isOwner) {
+            stopHeartbeat();
+          } else if (activeGateway && !activeGateway.isOwner) {
+            startHeartbeat();
+          }
         } catch {
           // Best effort — don't crash the host
         }

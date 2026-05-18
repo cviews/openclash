@@ -1,7 +1,11 @@
 import { parseArgs } from "node:util";
+import { createRequire } from "node:module";
 import { resolveConfig, generateApiKey } from "../config/index.js";
 import { createGateway } from "../gateway/index.js";
 import { logger } from "../shared/logger.js";
+
+const require = createRequire(import.meta.url);
+const { version: PKG_VERSION } = require("../../package.json");
 
 const TAG = "cli";
 
@@ -16,7 +20,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     case "keygen":
       return keygenCommand(argv.slice(1));
     case "version":
-      console.log("openclash v0.1.0");
+      console.log(`openclash v${PKG_VERSION}`);
       return;
     case undefined:
     case "--help":

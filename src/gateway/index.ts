@@ -24,7 +24,7 @@ export async function createGateway(config: OpenClashConfig): Promise<Gateway> {
   // Check if the port is already occupied by another OpenClash instance
   const portFree = await isPortAvailable(port, host);
   if (!portFree) {
-    const alreadyRunning = await isOpenClashRunning(port, host);
+    const alreadyRunning = await isOpenClashRunning(port, host, { retries: 3, delay: 500 });
     if (alreadyRunning) {
       logger.info(TAG, `OpenClash gateway already running on port ${port}, attaching to existing instance`);
       return {

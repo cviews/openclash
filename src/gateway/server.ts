@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createRequire } from "node:module";
 import type { OpenClashConfig } from "../config/types.js";
 import { providerPrefix } from "../config/types.js";
 import type { ProtocolAdapter } from "../protocols/adapter.js";
@@ -9,6 +10,9 @@ import { modelsHandler } from "./handlers/models.js";
 import { logger } from "../shared/logger.js";
 
 const TAG = "gateway";
+
+const require = createRequire(import.meta.url);
+const { version: PKG_VERSION } = require("../../package.json");
 
 /**
  * Create the Hono app with all provider routes mounted.
@@ -44,7 +48,7 @@ export function createGatewayApp(
   app.get("/", (c) =>
     c.json({
       name: "openclash",
-      version: "0.1.0",
+      version: PKG_VERSION,
       providers: Object.entries(config.providers).map(([id, cfg]) => ({
         id,
         name: cfg.name,

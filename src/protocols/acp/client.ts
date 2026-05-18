@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { Writable, Readable } from "node:stream";
+import { createRequire } from "node:module";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -15,6 +16,9 @@ import { AsyncQueue } from "../../shared/async-queue.js";
 import { logger } from "../../shared/logger.js";
 
 const TAG = "acp-client";
+
+const require = createRequire(import.meta.url);
+const { version: PKG_VERSION } = require("../../../package.json");
 
 /**
  * AcpClient manages a single ACP agent subprocess and its JSON-RPC connection.
@@ -101,7 +105,7 @@ export class AcpClient {
     // Initialize handshake
     const initResult = await this.connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
-      clientInfo: { name: "openclash", version: "0.1.0" },
+      clientInfo: { name: "openclash", version: PKG_VERSION },
       clientCapabilities: {},
     });
 
