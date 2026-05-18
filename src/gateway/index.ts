@@ -5,17 +5,41 @@ import type { ProtocolAdapter } from "../protocols/adapter.js";
 import { createAdapter } from "../protocols/index.js";
 import { createGatewayApp } from "./server.js";
 import { logger } from "../shared/logger.js";
+import { isPortAvailable, isOpenClashRunning } from "../shared/port.js";
 
 const TAG = "gateway";
 
 export type Gateway = {
   start(): Promise<void>;
   stop(): Promise<void>;
+  /** The actual port the gateway is listening on */
+  port: number;
+  /** Whether this instance owns the server or is attached to an existing one */
+  isOwner: boolean;
 };
 
 export async function createGateway(config: OpenClashConfig): Promise<Gateway> {
-  const adapters = new Map<string, ProtocolAdapter>();
+  const { port, host } = config.server;
 
+  // Check if the port is already occupied by another OpenClash instance
+  const portFree = await isPortAvailable(port, host);
+  if (!portFree) {
+    const alreadyRunning = await isOpenClashRunning(port, host);
+    if (alreadyRunning) {
+      logger.info(TAG, `OpenClash gateway already running on port ${port}, attaching to existing instance`);
+      return {
+        get port() { return port; },
+        get isOwner() { return false; },
+        async start() {},
+        async stop() {},
+      };
+    }
+    // Port is occupied by something else — let it fail with a clear message
+    throw new Error(`Port ${port} is already in use by another process (not OpenClash)`);
+  }
+
+  // We own this server — proceed with full startup
+  const adapters = new Map<string, ProtocolAdapter>();
   for (const [id, providerCfg] of Object.entries(config.providers)) {
     adapters.set(id, createAdapter(id, providerCfg));
   }
@@ -24,15 +48,17 @@ export async function createGateway(config: OpenClashConfig): Promise<Gateway> {
   let server: ReturnType<typeof serve> | null = null;
 
   return {
+    get port() { return port; },
+    get isOwner() { return true; },
+
     async start() {
-      // Start HTTP server first so the port is available immediately
       server = serve({
         fetch: app.fetch,
-        port: config.server.port,
-        hostname: config.server.host,
+        port,
+        hostname: host,
       });
 
-      logger.info(TAG, `OpenClash gateway listening on http://${config.server.host}:${config.server.port}`);
+      logger.info(TAG, `OpenClash gateway listening on http://${host}:${port}`);
 
       // Initialize providers in background — requests will wait via ensureConnected()
       logger.info(TAG, `Initializing ${adapters.size} provider(s)...`);
@@ -49,10 +75,9 @@ export async function createGateway(config: OpenClashConfig): Promise<Gateway> {
       );
 
       logger.info(TAG, "");
-      // Print per-provider connection info
       for (const [id, providerCfg] of Object.entries(config.providers)) {
         const prefix = providerPrefix(id);
-        const baseURL = `http://${config.server.host}:${config.server.port}${prefix}/v1`;
+        const baseURL = `http://${host}:${port}${prefix}/v1`;
         const models = Object.keys(providerCfg.models).join(", ");
         const auth = providerCfg.apiKey ? "enabled" : "disabled";
         logger.info(TAG, `  ${providerCfg.name}:`);
