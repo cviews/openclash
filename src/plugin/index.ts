@@ -80,7 +80,6 @@ export async function openclashServerPlugin(
     await gateway.start();
     activeGateway = gateway;
     toastShown = false;
-    showToast(gateway.port, !gateway.isOwner);
   };
 
   // Heartbeat: when attached (non-owner), poll the remote gateway periodically.
@@ -160,6 +159,9 @@ export async function openclashServerPlugin(
             stopHeartbeat();
           } else if (activeGateway && !activeGateway.isOwner) {
             startHeartbeat();
+          }
+          if (activeGateway) {
+            showToast(activeGateway.port, !activeGateway.isOwner);
           }
         } catch {
           // Best effort — don't crash the host
